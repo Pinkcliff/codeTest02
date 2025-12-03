@@ -76,8 +76,9 @@ def parse_rtu_response(response_bytes: bytes) -> Dict:
 class TemperatureDataStorage:
     """温度数据Redis存储管理类"""
 
-    def __init__(self, redis_manager: RedisManager):
+    def __init__(self, redis_manager: RedisManager, session_prefix: str = None):
         self.redis = redis_manager
+        self.session_prefix = session_prefix or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def save_realtime_data(self, temperatures: List[float], timestamp: str = None) -> bool:
         """保存实时温度数据到Hash结构"""
@@ -86,7 +87,7 @@ class TemperatureDataStorage:
 
         try:
             # 存储实时数据到Hash
-            realtime_key = "temperature:realtime"
+            realtime_key = f"{self.session_prefix}:temperature:realtime"
             mapping = {
                 "timestamp": timestamp,
                 "channel_count": str(len(temperatures))
@@ -122,7 +123,7 @@ class TemperatureDataStorage:
             record_json = json.dumps(record)
 
             # 保存到历史数据列表（最新数据在前）
-            history_key = "temperature:history"
+            history_key = f"{self.session_prefix}:temperature:history"
             self.redis.redis_client.lpush(history_key, record_json)
 
             # 保持历史数据列表长度（最多保存1000条记录）
@@ -146,7 +147,7 @@ class TemperatureDataStorage:
 
             # 为每个通道创建单独的时间序列
             for i, temp in enumerate(temperatures):
-                channel_key = f"temperature:timeseries:channel_{i+1:02d}"
+                channel_key = f"{self.session_prefix}:temperature:timeseries:channel_{i+1:02d}"
                 # 使用温度值作为成员，时间戳作为分数
                 self.redis.redis_client.zadd(channel_key, {f"{temp:.1f}": score})
 
@@ -167,7 +168,7 @@ class TemperatureDataStorage:
             max_temp = max(temperatures)
             avg_temp = sum(temperatures) / len(temperatures)
 
-            stats_key = "temperature:statistics"
+            stats_key = f"{self.session_prefix}:temperature:statistics"
             stats_mapping = {
                 "last_update": datetime.now().isoformat(),
                 "channel_count": str(len(temperatures)),
@@ -270,9 +271,13 @@ def temperature_data_collector_with_redis():
         print(f"{RED}❌ Redis连接失败，程序退出{RESET}")
         return
 
+    # 生成会话前缀
+    session_prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # 初始化数据存储管理器
-    storage = TemperatureDataStorage(redis_manager)
+    storage = TemperatureDataStorage(redis_manager, session_prefix)
     print(f"{GREEN}✅ Redis连接成功，开始数据采集...{RESET}")
+    print(f"{BLUE}📁 本次采集会话ID: {session_prefix}{RESET}")
     print("-"*80)
 
     # 连接函数

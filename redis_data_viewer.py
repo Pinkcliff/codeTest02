@@ -8,13 +8,61 @@ from redis_client import RedisManager
 class RedisDataViewer:
     """Redis数据查看和查询工具"""
 
-    def __init__(self, redis_manager: RedisManager):
+    def __init__(self, redis_manager: RedisManager, session_prefix: str = None):
         self.redis = redis_manager
+        self.session_prefix = session_prefix
+
+    def get_all_sessions(self) -> List[str]:
+        """获取所有采集会话"""
+        try:
+            keys = self.redis.redis_client.keys("*:temperature:realtime")
+            sessions = []
+            for key in keys:
+                session_id = key.split(":")[0]
+                sessions.append(session_id)
+            return sorted(sessions, reverse=True)  # 最新的在前
+        except Exception as e:
+            print(f"❌ 获取会话列表失败: {e}")
+            return []
+
+    def show_sessions(self) -> bool:
+        """显示所有采集会话"""
+        try:
+            sessions = self.get_all_sessions()
+
+            if not sessions:
+                print("📊 没有找到任何采集会话")
+                return False
+
+            print(f"🗂️ 找到 {len(sessions)} 个采集会话:")
+            print("-" * 50)
+
+            for i, session in enumerate(sessions, 1):
+                # 获取会话的统计信息
+                stats_key = f"{session}:temperature:statistics"
+                stats = self.redis.get_hash(stats_key)
+                last_update = stats.get('last_update', 'N/A') if stats else 'N/A'
+                channel_count = stats.get('channel_count', 'N/A') if stats else 'N/A'
+
+                print(f"   {i:2d}. {session}")
+                print(f"       最后更新: {last_update}")
+                print(f"       通道数量: {channel_count}")
+                print()
+
+            return True, sessions
+
+        except Exception as e:
+            print(f"❌ 显示会话列表失败: {e}")
+            return False, []
 
     def show_realtime_data(self) -> bool:
         """显示实时温度数据"""
         try:
-            realtime_key = "temperature:realtime"
+            if not self.session_prefix:
+                print("⚠️ 未指定会话，请先选择会话")
+                return False
+
+            realtime_key = f"{self.session_prefix}:temperature:realtime"
             data = self.redis.get_hash(realtime_key)
 
             if not data:
@@ -46,7 +94,11 @@ class RedisDataViewer:
     def show_latest_history(self, count: int = 10) -> bool:
         """显示最新的历史记录"""
         try:
-            history_key = "temperature:history"
+            if not self.session_prefix:
+                print("⚠️ 未指定会话，请先选择会话")
+                return False
+
+            history_key = f"{self.session_prefix}:temperature:history"
             records_json = self.redis.redis_client.lrange(history_key, 0, count - 1)
 
             if not records_json:
@@ -81,7 +133,11 @@ class RedisDataViewer:
     def show_statistics(self) -> bool:
         """显示统计信息"""
         try:
-            stats_key = "temperature:statistics"
+            if not self.session_prefix:
+                print("⚠️ 未指定会话，请先选择会话")
+                return False
+
+            stats_key = f"{self.session_prefix}:temperature:statistics"
             stats = self.redis.get_hash(stats_key)
 
             if not stats:
@@ -114,7 +170,11 @@ class RedisDataViewer:
     def show_channel_timeseries(self, channel: int, count: int = 20) -> bool:
         """显示指定通道的时间序列数据"""
         try:
-            channel_key = f"temperature:timeseries:channel_{channel:02d}"
+            if not self.session_prefix:
+                print("⚠️ 未指定会话，请先选择会话")
+                return False
+
+            channel_key = f"{self.session_prefix}:temperature:timeseries:channel_{channel:02d}"
             # 获取最新的数据点（分数从高到低排序）
             data_points = self.redis.redis_client.zrevrange(
                 channel_key, 0, count - 1, withscores=True
@@ -196,7 +256,12 @@ class RedisDataViewer:
     def export_data_to_json(self, output_file: str = "temperature_data_export.json") -> bool:
         """导出温度数据到JSON文件"""
         try:
+            if not self.session_prefix:
+                print("⚠️ 未指定会话，请先选择会话")
+                return False
+
             export_data = {
+                "session_id": self.session_prefix,
                 "export_time": datetime.now().isoformat(),
                 "realtime_data": {},
                 "history_data": [],
@@ -205,11 +270,11 @@ class RedisDataViewer:
             }
 
             # 导出实时数据
-            realtime_key = "temperature:realtime"
+            realtime_key = f"{self.session_prefix}:temperature:realtime"
             export_data["realtime_data"] = self.redis.get_hash(realtime_key)
 
             # 导出历史数据
-            history_key = "temperature:history"
+            history_key = f"{self.session_prefix}:temperature:history"
             history_records = self.redis.redis_client.lrange(history_key, 0, -1)
             for record_json in history_records:
                 try:
@@ -219,12 +284,12 @@ class RedisDataViewer:
                     continue
 
             # 导出统计信息
-            stats_key = "temperature:statistics"
+            stats_key = f"{self.session_prefix}:temperature:statistics"
             export_data["statistics"] = self.redis.get_hash(stats_key)
 
             # 导出时间序列数据（每个通道最新50个数据点）
             for i in range(1, 13):
-                channel_key = f"temperature:timeseries:channel_{i:02d}"
+                channel_key = f"{self.session_prefix}:temperature:timeseries:channel_{i:02d}"
                 data_points = self.redis.redis_client.zrevrange(
                     channel_key, 0, 49, withscores=True
                 )
@@ -274,37 +339,58 @@ def main():
         return
 
     viewer = RedisDataViewer(redis_manager)
+    current_session = None
 
     try:
         while True:
             print("\n" + "="*60)
+            print("🔍 Redis温度数据查看器")
+            if current_session:
+                print(f"📁 当前会话: {current_session}")
+            else:
+                print("📁 未选择会话")
+            print("="*60)
             print("📋 请选择要查看的数据:")
-            print("1. 🌡️  实时温度数据")
-            print("2. 📜 最新历史记录")
-            print("3. 📈 统计信息")
-            print("4. ⏱️  时间序列数据")
-            print("5. 💾 Redis数据库信息")
-            print("6. 📤 导出数据到JSON文件")
+            print("1. 🗂️ 查看所有采集会话")
+            print("2. 🌡️  实时温度数据")
+            print("3. 📜 最新历史记录")
+            print("4. 📈 统计信息")
+            print("5. ⏱️  时间序列数据")
+            print("6. 💾 Redis数据库信息")
+            print("7. 📤 导出数据到JSON文件")
             print("0. 🚪 退出程序")
             print("="*60)
 
-            choice = input("请输入选项 (0-6): ").strip()
+            choice = input("请输入选项 (0-7): ").strip()
 
             if choice == '0':
                 print("👋 再见！")
                 break
             elif choice == '1':
                 print("\n" + "="*60)
-                viewer.show_realtime_data()
+                success, sessions = viewer.show_sessions()
+                if success and sessions:
+                    session_choice = input("选择要查看的会话编号 (直接回车取消): ").strip()
+                    if session_choice.isdigit() and 1 <= int(session_choice) <= len(sessions):
+                        current_session = sessions[int(session_choice) - 1]
+                        viewer.session_prefix = current_session
+                        print(f"✅ 已选择会话: {current_session}")
+                    elif session_choice == "":
+                        print("⚠️ 取消选择会话")
+                    else:
+                        print("❌ 无效的会话编号")
             elif choice == '2':
+                print("\n" + "="*60)
+                viewer.show_realtime_data()
+            elif choice == '3':
                 count = input("显示多少条记录 (默认10): ").strip()
                 count = int(count) if count.isdigit() else 10
                 print("\n" + "="*60)
                 viewer.show_latest_history(count)
-            elif choice == '3':
+            elif choice == '4':
                 print("\n" + "="*60)
                 viewer.show_statistics()
-            elif choice == '4':
+            elif choice == '5':
                 channel = input("查看哪个通道 (1-12): ").strip()
                 if channel.isdigit() and 1 <= int(channel) <= 12:
                     count = input("显示多少个数据点 (默认20): ").strip()
@@ -313,12 +399,14 @@ def main():
                     viewer.show_channel_timeseries(int(channel), count)
                 else:
                     print("❌ 请输入1-12之间的数字")
-            elif choice == '5':
+            elif choice == '6':
                 print("\n" + "="*60)
                 viewer.show_redis_info()
-            elif choice == '6':
+            elif choice == '7':
                 filename = input("导出文件名 (默认 temperature_data_export.json): ").strip()
                 filename = filename if filename else "temperature_data_export.json"
+                if current_session:
+                    filename = f"{current_session}_{filename}"
                 print("\n" + "="*60)
                 viewer.export_data_to_json(filename)
             else:
