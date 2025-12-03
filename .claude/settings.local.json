@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mcp-all-in-one__filesystem__list_directory",
+      "Bash(dir:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
