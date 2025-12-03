@@ -102,7 +102,9 @@ class RedisManager:
             return False
 
         try:
-            result = self.redis_client.hset(name, mapping=mapping)
+            # 使用兼容的方式设置哈希表
+            for key, value in mapping.items():
+                self.redis_client.hset(name, key, value)
             print(f"✅ 设置哈希表: {name} = {mapping}")
             return True
         except Exception as e:
