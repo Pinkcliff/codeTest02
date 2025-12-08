@@ -1,1 +1,6 @@
 redis==5.0.1
+pymongo==4.6.0
+matplotlib==3.8.2
+numpy==1.26.2
+pandas==2.1.4
+threading-utils==0.3.0
